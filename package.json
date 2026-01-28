@@ -1,0 +1,23 @@
+{
+  "name": "rmgreatservices_api",
+  "version": "1.0.0",
+  "private": true,
+  "main": "netlify/functions/contact.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mvmags/rmgreatservices_backend.git"
+  },
+  "keywords": [
+    "rmgreatservices"
+  ],
+  "author": "Marco Velasco Martinez",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mvmags/rmgreatservices_backend/issues"
+  },
+  "homepage": "https://github.com/mvmags/rmgreatservices_backend#readme",
+  "description": ""
+}
