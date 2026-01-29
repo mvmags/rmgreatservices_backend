@@ -3,43 +3,90 @@
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const CONTACT_TO_EMAIL = process.env.CONTACT_TO_EMAIL; // where you receive messages
 const CONTACT_FROM_EMAIL = process.env.CONTACT_FROM_EMAIL; // must be verified in Resend
-const TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY; // optional but recommended
 
-function json(statusCode, body) {
+const ALLOWED_ORIGINS = new Set([
+  "https://rml230878.github.io/rmgreatservices/",
+  "https://rmgreatservices.com",
+  "https://www.rmgreatservices.com"
+]);
+
+function newRequestId() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function log(level, eventName, details = {}) {
+  // Netlify captures stdout/stderr, so console.log works.
+  // Use JSON logs so you can search by fields.
+  const entry = {
+    ts: new Date().toISOString(),
+    level,              // "info" | "warn" | "error"
+    event: eventName,   // e.g. "contact.received"
+    ...details
+  };
+
+  if (level === "error") console.error(JSON.stringify(entry));
+  else console.log(JSON.stringify(entry));
+}
+
+function maskEmail(email) {
+  const e = String(email || "");
+  const at = e.indexOf("@");
+  if (at <= 1) return "***";
+  return e.slice(0, 2) + "***" + e.slice(at);
+}
+
+function getClientIp(event) {
+  return (
+    event.headers["x-nf-client-connection-ip"] ||
+    event.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+    event.headers["client-ip"] ||
+    ""
+  );
+}
+
+function accessControlAllowOriginValue(origin) {
+  const ok = origin && ALLOWED_ORIGINS.has(origin);
+  return ok ? origin : "null";
+}
+
+function corsHeaders(origin) {
+  const ok = origin && ALLOWED_ORIGINS.has(origin);
+  return {
+    "Access-Control-Allow-Origin": ok ? origin : "null",
+    "Vary": "Origin",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
+}
+
+function json(statusCode, body, origin) {
+  console.log("body origin:", origin);
+
   return {
     statusCode,
     headers: {
       "Content-Type": "application/json",
       // Basic CORS (adjust if you need)
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Allow-Methods": "POST, OPTIONS"
+      ...corsHeaders(origin)
     },
     body: JSON.stringify(body)
   };
+
+//   return {
+//     statusCode,
+//     headers: {
+//       "Content-Type": "application/json",
+//       // Basic CORS (adjust if you need)
+//       "Access-Control-Allow-Origin": "*",
+//       "Access-Control-Allow-Headers": "Content-Type",
+//       "Access-Control-Allow-Methods": "POST, OPTIONS"
+//     },
+//     body: JSON.stringify(body)
+//   };
 }
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
-}
-
-async function verifyTurnstile(token, ip) {
-  if (!TURNSTILE_SECRET_KEY) return { ok: true, skipped: true };
-  if (!token) return { ok: false, reason: "Missing captchaToken" };
-
-  const form = new URLSearchParams();
-  form.set("secret", TURNSTILE_SECRET_KEY);
-  form.set("response", token);
-  if (ip) form.set("remoteip", ip);
-
-  const resp = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: form.toString()
-  });
-
-  const data = await resp.json();
-  return { ok: !!data.success, data };
 }
 
 async function sendWithResend({ name, email, subject, phone, message }) {
@@ -87,20 +134,44 @@ ${message}
 }
 
 exports.handler = async (event) => {
+  const origin = event.headers?.origin || "";
+  const reqId = newRequestId();
+  const ip = getClientIp(event);
+
+  log("info", "contact.request", {
+    reqId,
+    method: event.httpMethod,
+    origin,
+    ip,
+    path: event.path
+  });
+
   // Preflight
   if (event.httpMethod === "OPTIONS") {
-    return json(204, {});
+    return json(
+        204,
+        {},
+        origin
+    );
   }
 
   if (event.httpMethod !== "POST") {
-    return json(405, { error: "Method Not Allowed" });
+    return json(
+        405,
+        { error: "Method Not Allowed" },
+        origin
+    );
   }
 
   let body;
   try {
     body = JSON.parse(event.body || "{}");
   } catch {
-    return json(400, { error: "Invalid JSON" });
+    return json(
+        400,
+        { error: "Invalid JSON" },
+        origin
+    );
   }
 
   const name = String(body.name || "").trim();
@@ -113,33 +184,59 @@ exports.handler = async (event) => {
   // Real users keep it empty; many bots fill it.
   const honeypot = String(body.website || "").trim();
   if (honeypot) {
+    log("warn", "contact.honeypot_hit", { reqId, ip, origin });
+
     // Pretend success to avoid teaching bots
-    return json(200, { success: true });
+    return json(
+        200,
+        { success: true },
+        origin
+    );
   }
 
   // Basic validation
   if (!name || !email || !message) {
+    log("warn", "contact.validation_failed", {
+        reqId,
+        ip,
+        origin,
+        reason: "missing_fields" // or "invalid_email", etc.
+    });
     return json(400, { error: "Missing required fields: name, email, message" });
   }
   if (!isValidEmail(email)) {
+    log("warn", "contact.validation_failed", {
+        reqId,
+        ip,
+        origin,
+        reason: "invalid_email" // or "invalid_email", etc.
+    });
     return json(400, { error: "Invalid email format" });
   }
   if (message.length > 5000) {
+    log("warn", "contact.validation_failed", {
+        reqId,
+        ip,
+        origin,
+        reason: "message_too_long" // or "invalid_email", etc.
+    });
     return json(400, { error: "Message too long" });
   }
 
-  // CAPTCHA (Turnstile) server-side verification
-  const captchaToken = body.captchaToken ? String(body.captchaToken) : "";
-  const ip = event.headers["x-nf-client-connection-ip"] || event.headers["client-ip"] || "";
-  const captcha = await verifyTurnstile(captchaToken, ip);
-  if (!captcha.ok) {
-    return json(400, { error: "Captcha failed" });
-  }
+  log("info", "contact.received", {
+    reqId,
+    ip,
+    origin,
+    nameLen: name.length,
+    emailMasked: maskEmail(email),
+    subjectLen: subject.length,
+    messageLen: message.length
+  });
 
   // Send email
   try {
     const result = await sendWithResend({ name, email, subject, phone, message });
-    return json(200, { success: true, id: result.id || null });
+    return json(200, { success: true, id: result.id || null }, origin);
   } catch (err) {
     return json(500, { error: "Email send failed" });
   }
