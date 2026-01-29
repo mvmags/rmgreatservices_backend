@@ -5,6 +5,7 @@ const CONTACT_TO_EMAIL = process.env.CONTACT_TO_EMAIL; // where you receive mess
 const CONTACT_FROM_EMAIL = process.env.CONTACT_FROM_EMAIL; // must be verified in Resend
 
 const ALLOWED_ORIGINS = new Set([
+  "https://rml230878.github.io",
   "https://rml230878.github.io/rmgreatservices/",
   "https://rmgreatservices.com",
   "https://www.rmgreatservices.com"
@@ -46,7 +47,7 @@ function getClientIp(event) {
 
 function accessControlAllowOriginValue(origin) {
   const ok = origin && ALLOWED_ORIGINS.has(origin);
-  return ok ? origin : "null";
+  return ok ? origin : "https://rml230878.github.io";
 }
 
 function corsHeaders(origin) {
