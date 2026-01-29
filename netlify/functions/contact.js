@@ -60,7 +60,15 @@ function corsHeaders(origin) {
 }
 
 function json(statusCode, body, origin) {
-  console.log("body origin:", origin);
+  log(
+    "info",
+    "json.generate",
+    {
+        statusCode,
+        isBody: body ? true : false,
+        origin: origin || ""
+    }
+  );
 
   return {
     statusCode,
@@ -90,9 +98,19 @@ function isValidEmail(email) {
 }
 
 async function sendWithResend({ name, email, subject, phone, message }) {
-  if (!RESEND_API_KEY) throw new Error("Missing RESEND_API_KEY");
-  if (!CONTACT_TO_EMAIL) throw new Error("Missing CONTACT_TO_EMAIL");
-  if (!CONTACT_FROM_EMAIL) throw new Error("Missing CONTACT_FROM_EMAIL");
+    
+  if (!RESEND_API_KEY) {
+    log("error", "contact.missing_config", { missing: "RESEND_API_KEY" });
+    throw new Error("Missing RESEND_API_KEY");
+  }
+  if (!CONTACT_TO_EMAIL) {
+    log("error", "contact.missing_config", { missing: "CONTACT_TO_EMAIL" });
+    throw new Error("Missing CONTACT_TO_EMAIL");
+  }
+  if (!CONTACT_FROM_EMAIL) {
+    log("error", "contact.missing_config", { missing: "CONTACT_FROM_EMAIL" });
+    throw new Error("Missing CONTACT_FROM_EMAIL");
+  }
 
   const safeSubject = subject?.trim() ? subject.trim() : "New contact form message";
 
@@ -116,6 +134,14 @@ ${message}
     text
   };
 
+  log("info", "contact.sending_email", {
+    to: CONTACT_TO_EMAIL,
+    from: CONTACT_FROM_EMAIL,
+    reply_to: email,
+    subject: payload.subject,
+    textLen: text.length
+  });
+
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -127,6 +153,10 @@ ${message}
 
   if (!resp.ok) {
     const errText = await resp.text();
+    log("error", "contact.resend_error", {
+        status: resp.status,
+        textError: errText
+    });
     throw new Error(`Resend error ${resp.status}: ${errText}`);
   }
 
@@ -173,6 +203,16 @@ exports.handler = async (event) => {
         origin
     );
   }
+
+  // TODO: remove this line after testing
+  log("debug", "request.body", {
+    reqId,
+    method: event.httpMethod,
+    origin,
+    ip,
+    path: event.path,
+    body
+  });
 
   const name = String(body.name || "").trim();
   const email = String(body.email || "").trim();
